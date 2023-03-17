@@ -36,6 +36,7 @@ parser.add_argument('--n_feats', type=int, default=256,
                     help='number of feature maps')
 parser.add_argument('--res_scale', type=float, default=0.1,
                     help='residual scaling')
+parser.add_argument('--legacy', action='store_true')
 
 
 # Training specifications

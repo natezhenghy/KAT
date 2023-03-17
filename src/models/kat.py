@@ -28,7 +28,7 @@ class KAT(nn.Module):
 
         m_body: list[nn.Module] = [
             KABlock(
-                n_feats, kernel_size, res_scale=args.res_scale
+                n_feats, kernel_size, res_scale=args.res_scale, legacy=args.legacy
             ) for _ in range(n_blocks)
         ]
         m_body.append(conv(n_feats, n_feats, kernel_size))
@@ -74,7 +74,7 @@ def conv(in_channels: int, out_channels: int, kernel_size: int, bias: bool=True)
         padding=(kernel_size//2), bias=bias)
 
 class KAM(nn.Module):
-    def __init__(self, n_feat: int, kernel_size: int=3, bias: bool=False):
+    def __init__(self, n_feat: int, kernel_size: int=3, bias: bool=False, legacy: bool=False):
         super().__init__()
         self.kernel_size = kernel_size
 
@@ -92,6 +92,7 @@ class KAM(nn.Module):
         self.temperature = Parameter(torch.zeros(1, 1, 1))
         self.pre_normalize = True
         self.relu = nn.ReLU(inplace=True)
+        self.legacy = legacy
 
     def xtx(self, q: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
         """
@@ -134,9 +135,14 @@ class KAM(nn.Module):
                                          self.kernel_size).permute(
                                              0, 2, 1, 3, 4).contiguous()
 
-        atten_kernel = rearrange(atten_kernel, 'N B C D1 D2 -> N B (C D1 D2)')
-        atten_kernel = torch.nn.functional.normalize(atten_kernel, dim=-1)
-        atten_kernel = rearrange(atten_kernel, 'N B (C D1 D2) -> N B C D1 D2', D1=self.kernel_size, D2=self.kernel_size)
+        if self.legacy:
+            viewed_atten_kernel = atten_kernel.view(atten_kernel.size(0), -1)
+            atten_kernel = ((atten_kernel - viewed_atten_kernel.mean(dim=1).view(-1, 1, 1, 1, 1)) / 
+                            viewed_atten_kernel.std(dim=1).view(-1, 1, 1, 1, 1))
+        else:
+            atten_kernel = rearrange(atten_kernel, 'N B C D1 D2 -> N B (C D1 D2)')
+            atten_kernel = torch.nn.functional.normalize(atten_kernel, dim=-1)
+            atten_kernel = rearrange(atten_kernel, 'N B (C D1 D2) -> N B C D1 D2', D1=self.kernel_size, D2=self.kernel_size)
 
         atten_kernel = self.weight.unsqueeze(0).repeat(
             (x.size(0), 1, 1, 1,
@@ -248,11 +254,11 @@ class MeanShift(nn.Conv2d):
 
 class KABlock(nn.Module):
     def __init__(
-        self, n_feats: int, kernel_size: int, bias: bool=True, bn: str='none', res_scale: float=1):
+        self, n_feats: int, kernel_size: int, bias: bool=True, bn: str='none', res_scale: float=1, legacy: bool=False):
 
         super(KABlock, self).__init__()
         m = []
-        m.append(KAM(n_feats, kernel_size, bias=bias))
+        m.append(KAM(n_feats, kernel_size, bias=bias, legacy=legacy))
         m.append(nn.ReLU(True))
         if bn == 'bn':
             m.append(nn.BatchNorm2d(n_feats))
